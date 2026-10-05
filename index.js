@@ -178,10 +178,6 @@ app.get('/join', (req, res) => {
                     <button onclick="goToScreen(2)" class="w-full bg-taupe hover-bg-taupe text-white font-bold py-4 rounded-2xl text-sm transition-all shadow-md active:scale-[0.99]">
                         Let's Get You Signed Up
                     </button>
-
-                    <button onclick="goToExistingCheck()" class="mt-4 text-xs font-bold text-[#6B6B6B] hover:text-slate-teal transition">
-                        Already a member? Check your card
-                    </button>
                 </div>
 
                 <!-- SCREEN 2: NAME -->
@@ -225,15 +221,13 @@ app.get('/join', (req, res) => {
                     </button>
                 </div>
 
-                <!-- SCREEN 4: MOBILE (OPTIONAL) -->
+                <!-- SCREEN 4: PHONE NUMBER -->
                 <div id="screen4" class="brand-card p-8 rounded-3xl text-left hidden">
                     <img src="${CONFIG.LOGO_URL}" alt="The Boulevard" class="h-8 mx-auto mb-6 object-contain opacity-80">
                     <p class="text-[10px] font-bold uppercase tracking-widest text-slate-teal mb-1">Step 3 of 5</p>
-                    <h2 class="text-2xl font-extrabold text-[#2C2C2A] mb-2">Fancy staying in touch?</h2>
-                    <p class="text-[#6B6B6B] text-xs mb-6">Optional: For VIP tables, last minute cancellations, and seasonal perks.</p>
+                    <h2 class="text-2xl font-extrabold text-[#2C2C2A] mb-6">Phone Number</h2>
                     
                     <div class="mb-8">
-                        <label class="block text-[11px] font-bold text-taupe uppercase tracking-wider mb-2">Mobile Number <span class="text-[#999999] font-normal">(Optional)</span></label>
                         <input type="tel" id="custPhone" placeholder="07123 456789" class="w-full px-4 py-3.5 bg-[#F9F9F6] border border-[#D1D1C7] rounded-2xl focus:border-taupe text-[#2C2C2A] outline-none font-medium text-sm">
                     </div>
 
@@ -283,6 +277,14 @@ app.get('/join', (req, res) => {
                             <span class="ml-3 font-semibold text-sm text-[#2C2C2A]">I visit both</span>
                         </label>
                     </div>
+
+                    <!-- MARKETING CONSENT TICK BOX -->
+                    <label class="flex items-start p-4 mb-6 bg-[#F9F9F6] rounded-2xl border border-[#D1D1C7] cursor-pointer hover:border-taupe transition text-left">
+                        <input type="checkbox" id="custMarketingConsent" class="accent-[#757468] w-5 h-5 mt-0.5 rounded cursor-pointer">
+                        <span class="ml-3 text-xs leading-relaxed text-[#5F656F] font-medium">
+                            I consent to receive exclusive treats, birthday gifts, and special promotions from the Boulevard family.
+                        </span>
+                    </label>
 
                     <button onclick="submitRegistration()" class="w-full bg-taupe hover-bg-taupe text-white font-bold py-4 rounded-2xl text-sm transition-all shadow-md">
                         Complete Membership
@@ -467,6 +469,8 @@ app.get('/join', (req, res) => {
 
                 async function submitRegistration() {
                     const venue = document.querySelector('input[name="venueChoice"]:checked').value;
+                    const isConsented = document.getElementById('custMarketingConsent').checked;
+                    
                     registrationData.homeVenue = venue;
                     registrationData.phone = document.getElementById('custPhone').value.trim();
 
@@ -481,7 +485,7 @@ app.get('/join', (req, res) => {
                             phone: registrationData.phone,
                             dob: registrationData.dob,
                             homeVenue: registrationData.homeVenue,
-                            marketingConsent: true
+                            marketingConsent: isConsented
                         })
                     }).then(r => r.json());
                     toggleSpinner(false);
