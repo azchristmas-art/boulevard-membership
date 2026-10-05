@@ -248,7 +248,38 @@ app.get('/join', (req, res) => {
                     
                     <div class="mb-8">
                         <label class="block text-[11px] font-bold text-taupe uppercase tracking-wider mb-2">Date of Birth</label>
-                        <input type="date" id="custDob" class="w-full px-4 py-3.5 bg-[#F9F9F6] border border-[#D1D1C7] rounded-2xl focus:border-taupe text-[#2C2C2A] outline-none font-medium text-sm">
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="block text-[10px] font-bold text-[#888888] uppercase mb-1">Day</label>
+                                <select id="dobDay" class="w-full px-3 py-3.5 bg-[#F9F9F6] border border-[#D1D1C7] rounded-2xl focus:border-taupe text-[#2C2C2A] outline-none font-semibold text-sm">
+                                    <option value="" disabled selected>DD</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-[#888888] uppercase mb-1">Month</label>
+                                <select id="dobMonth" class="w-full px-3 py-3.5 bg-[#F9F9F6] border border-[#D1D1C7] rounded-2xl focus:border-taupe text-[#2C2C2A] outline-none font-semibold text-sm">
+                                    <option value="" disabled selected>MM</option>
+                                    <option value="01">Jan</option>
+                                    <option value="02">Feb</option>
+                                    <option value="03">Mar</option>
+                                    <option value="04">Apr</option>
+                                    <option value="05">May</option>
+                                    <option value="06">Jun</option>
+                                    <option value="07">Jul</option>
+                                    <option value="08">Aug</option>
+                                    <option value="09">Sep</option>
+                                    <option value="10">Oct</option>
+                                    <option value="11">Nov</option>
+                                    <option value="12">Dec</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-[#888888] uppercase mb-1">Year</label>
+                                <select id="dobYear" class="w-full px-3 py-3.5 bg-[#F9F9F6] border border-[#D1D1C7] rounded-2xl focus:border-taupe text-[#2C2C2A] outline-none font-semibold text-sm">
+                                    <option value="" disabled selected>YYYY</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
 
                     <button onclick="validateStep5()" class="w-full bg-taupe hover-bg-taupe text-white font-bold py-4 rounded-2xl text-sm transition-all shadow-md">
@@ -430,10 +461,28 @@ app.get('/join', (req, res) => {
                     goToScreen(4);
                 }
 
+                function initDobSelectors() {
+                    const daySelect = document.getElementById('dobDay');
+                    const yearSelect = document.getElementById('dobYear');
+                    if (!daySelect || !yearSelect || daySelect.options.length > 1) return;
+                    for (let d = 1; d <= 31; d++) {
+                        const val = d < 10 ? '0' + d : '' + d;
+                        daySelect.add(new Option(val, val));
+                    }
+                    const currentYr = new Date().getFullYear();
+                    for (let y = currentYr - 10; y >= 1920; y--) {
+                        yearSelect.add(new Option(String(y), String(y)));
+                    }
+                }
+                document.addEventListener('DOMContentLoaded', initDobSelectors);
+                initDobSelectors();
+
                 function validateStep5() {
-                    const dob = document.getElementById('custDob').value;
-                    if (!dob) { alert("Please select your date of birth so we can send your birthday voucher."); return; }
-                    registrationData.dob = dob;
+                    const day = document.getElementById('dobDay').value;
+                    const month = document.getElementById('dobMonth').value;
+                    const year = document.getElementById('dobYear').value;
+                    if (!day || !month || !year) { alert("Please select your date of birth so we can send your birthday voucher."); return; }
+                    registrationData.dob = year + '-' + month + '-' + day;
                     goToScreen(6);
                 }
 
