@@ -424,6 +424,32 @@ app.get('/join', (req, res) => {
                     if (email) checkExistingEmail(email);
                 }
 
+                function handleWifiRedirect() {
+                    const params = new URLSearchParams(window.location.search);
+                    const emailParam = params.get('email');
+                    const venueParam = params.get('venue');
+
+                    if (emailParam) {
+                        const cleanEmail = emailParam.trim().toLowerCase();
+                        const emailInput = document.getElementById('custEmail');
+                        if (emailInput) {
+                            emailInput.value = cleanEmail;
+                        }
+                        if (typeof registrationData !== 'undefined') {
+                            registrationData.email = cleanEmail;
+                        }
+                    }
+
+                    if (venueParam) {
+                        if (typeof registrationData !== 'undefined') {
+                            registrationData.homeVenue = venueParam;
+                        }
+                        const venueRadio = document.querySelector('input[name="venueChoice"][value="' + venueParam + '"]');
+                        if (venueRadio) venueRadio.checked = true;
+                    }
+                }
+                document.addEventListener('DOMContentLoaded', handleWifiRedirect);
+
                 function validateStep2() {
                     const first = document.getElementById('custFirstName').value.trim();
                     const last = document.getElementById('custLastName').value.trim();
