@@ -519,6 +519,10 @@ app.get('/join', (req, res) => {
                 async function submitRegistration() {
                     const venue = document.querySelector('input[name="venueChoice"]:checked').value;
                     const isConsented = document.getElementById('custMarketingConsent').checked;
+                    if (!isConsented) {
+                        alert("Please tick the consent box to receive your membership treats and birthday rewards.");
+                        return;
+                    }
                     
                     registrationData.homeVenue = venue;
                     registrationData.phone = document.getElementById('custPhone').value.trim();
