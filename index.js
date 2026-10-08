@@ -2080,75 +2080,111 @@ app.post('/api/member/signup', async (req, res) => {
 app.post('/api/run-google-reviews', async (req, res) => {
     try {
         const sheets = getSheetsClient();
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId: CONFIG.SPREADSHEET_ID, range: `${CONFIG.MEMBERS_SHEET}!A2:Q` });
-        const members = response.data.values || [];
-        if (members.length === 0) return res.json({ success: true, message: 'No members to evaluate.' });
 
-        const postman = nodemailer.createTransport({ service: 'gmail', auth: { user: CONFIG.EMAIL_USER, pass: CONFIG.EMAIL_PASS } });
-        let dispatchedCount = 0;
+        // 1. Fetch Wi-Fi leads logged today
+        const wifiRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: `${CONFIG.WIFI_LEADS_SHEET}!A2:C`
+        });
+        const wifiRows = wifiRes.data.values || [];
+
         const nowUK = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/London" }));
-        const todayStr = nowUK.toLocaleDateString('en-GB');
+        const todayStr = nowUK.toLocaleDateString('en-GB'); // e.g. DD/MM/YYYY
         const timestampStr = nowUK.toLocaleString('en-GB', { timeZone: 'Europe/London' });
+
+        // Build a map of distinct emails that connected to Wi-Fi today and their venue
+        const todaysWifiGuests = new Map();
+        for (const wRow of wifiRows) {
+            const rowTime = (wRow[0] || '').trim();
+            const venue = (wRow[1] || 'Selsey').trim();
+            const email = (wRow[2] || '').trim().toLowerCase();
+            if (rowTime.startsWith(todayStr) && email.includes('@')) {
+                todaysWifiGuests.set(email, venue);
+            }
+        }
+
+        if (todaysWifiGuests.size === 0) {
+            return res.json({ success: true, message: 'No Wi-Fi connections recorded today (' + todayStr + ').' });
+        }
+
+        // 2. Cross-reference with the Members master directory
+        const memberRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: `${CONFIG.MEMBERS_SHEET}!A2:Q`
+        });
+        const members = memberRes.data.values || [];
+        if (members.length === 0) {
+            return res.json({ success: true, message: 'No registered members found.' });
+        }
+
+        const postman = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user: CONFIG.EMAIL_USER, pass: CONFIG.EMAIL_PASS }
+        });
+
+        let dispatchedCount = 0;
 
         for (let i = 0; i < members.length; i++) {
             const row = members[i];
-            const email = (row[MEMBER_COL.email - 1] || '').trim();
+            const email = (row[MEMBER_COL.email - 1] || '').trim().toLowerCase();
             const firstName = (row[MEMBER_COL.firstName - 1] || '').trim();
-            const lastVisit = (row[MEMBER_COL.lastVisitDate - 1] || '').trim();
             const consent = (row[MEMBER_COL.consent - 1] || '').toUpperCase();
             const reviewSent = (row[MEMBER_COL.reviewSent - 1] || '').trim();
-            const homeVenue = (row[MEMBER_COL.homeVenue - 1] || '').toLowerCase().includes('wittering') ? 'East Wittering' : 'Selsey';
 
-            // Check if visited today, has consent, and never sent a review request
-            if (lastVisit === todayStr && consent === 'TRUE' && reviewSent === '' && email.includes('@')) {
-                const reviewLink = homeVenue === 'East Wittering' ? 'https://g.page/r/CSKeJeTOCIv3EBM/review' : 'https://g.page/r/selsey_link_pending';
-                
+            // Condition: Connected to Wi-Fi today, marketing consent granted, and no review email sent yet
+            if (todaysWifiGuests.has(email) && consent === 'TRUE' && reviewSent === '') {
+                const venueConnected = todaysWifiGuests.get(email);
+                const venueName = venueConnected.toLowerCase().includes('wittering') ? 'East Wittering' : 'Selsey';
+                const reviewLink = venueName === 'East Wittering'
+                    ? 'https://g.page/r/CSKeJeTOCIv3EBM/review'
+                    : 'https://g.page/r/selsey_link_pending';
+
                 try {
                     await postman.sendMail({
                         from: `"${CONFIG.EMAIL_SENDER_NAME}" <${CONFIG.EMAIL_USER}>`,
                         to: email,
                         subject: `A 10-second review really helps more than you'd think ⭐`,
-                        html: `<div style="font-family: Arial, sans-serif; text-align: center; color: #2C2C2A; padding: 20px; background-color: #F9F9F6;">
+                        html: `
+                            <div style="font-family: Arial, sans-serif; text-align: center; color: #2C2C2A; padding: 20px; background-color: #F9F9F6;">
                                 <div style="max-width: 600px; margin: auto; border: 1px solid #E5E5E0; padding: 30px; border-radius: 12px; background-color: #ffffff;">
-                                    <h2 style="color: #2C2C2A; margin-top: 10px; font-size: 24px; font-weight: bold;">How was your visit, ${firstName}?</h2>
+                                    <h2 style="color: #2C2C2A; margin-top: 10px; font-size: 24px; font-weight: bold;">How was your visit today, ${firstName}?</h2>
                                     <p style="font-size: 15px; color: #555553; line-height: 1.6;">
-                                        As an independent family restaurant, local reviews mean the world to us and really help others find us. If you enjoyed your time at Boulevard ${homeVenue} today, we'd be incredibly grateful for a quick 5-star review.
+                                        As an independent family restaurant, local reviews mean the world to us and really help others discover us. If you enjoyed your time at Boulevard ${venueName} today, we would be incredibly grateful for a quick 5-star review.
                                     </p>
                                     <div style="margin: 30px 0;">
                                         <a href="${reviewLink}" style="background-color: #D4AF37; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
                                             Leave a Quick 5-Star Review
                                         </a>
                                     </div>
-                                    <p style="font-size: 12px; color: #718281; margin-top: 20px;">Thank you for being part of the Boulevard family!</p>
+                                    <p style="font-size: 12px; color: #718281; margin-top: 20px;">
+                                        Thank you for being part of the Boulevard family!
+                                    </p>
                                 </div>
                             </div>`
                     });
 
-                    // Stamp Column P (index 16) with dispatch timestamp
+                    // Lockout: Stamp Column P (Row i + 2)
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: CONFIG.SPREADSHEET_ID,
                         range: `${CONFIG.MEMBERS_SHEET}!P${i + 2}`,
                         valueInputOption: 'USER_ENTERED',
                         requestBody: { values: [[timestampStr]] }
                     });
+
                     dispatchedCount++;
-                } catch (mailErr) { console.error('Review send err: ', mailErr.message); }
+                } catch (mailErr) {
+                    console.error('Review email failed for ' + email + ':', mailErr.message);
+                }
             }
         }
+
         await writeAuditLog(req, 'BATCH_WORKER', 'SYSTEM', `Google Review Requests Dispatched: ${dispatchedCount}`);
-        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests.` });
+        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests based on today's Wi-Fi activity.` });
     } catch (err) {
-        return res.status(500).json({ success: false, message: 'Review batch failed: ' + err.message });
+        return res.status(500).json({ success: false, message: 'Google Review batch failed: ' + err.message });
     }
 });
 
-
-app.post('/api/run-evening-passes', async (req, res) => {
-    try {
-        const result = await processEveningBatch();
-        return res.json({ success: true, message: `Dispatched ${result.passesIssued} evening passes.` });
-    } catch (err) { return res.status(500).json({ success: false, message: err.message }); }
-});
 
 app.post('/api/run-birthdays', async (req, res) => {
     try {
