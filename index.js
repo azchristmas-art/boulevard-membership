@@ -2130,7 +2130,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
             const firstName = (row[MEMBER_COL.firstName - 1] || '').trim();
             const consent = (row[MEMBER_COL.consent - 1] || '').toUpperCase();
             
-            // Check Column P (Index 15) for lockout
+            // Check Column P (Index 15) for review lockout
             const reviewSent = (row[15] || '').trim();
 
             // Condition: Connected to Wi-Fi today AND marketing consent granted AND no review sent yet
@@ -2139,7 +2139,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
                 const isWittering = venueConnected.toLowerCase().includes('wittering');
                 const venueName = isWittering ? 'East Wittering' : 'Selsey';
                 
-                // Direct live Google Review links
+                // Live Google review landing URLs
                 const reviewUrl = isWittering
                     ? 'https://g.page/r/CSKeJeTOCIv3EBM/review'
                     : 'https://g.page/r/CTYyWhDJdC3JEBM/review';
@@ -2175,28 +2175,6 @@ app.post('/api/run-google-reviews', async (req, res) => {
                     });
 
                     // Lockout: Stamp Column P (Row i + 2) in Members
-                    await sheets.spreadsheets.values.update({
-                        spreadsheetId: CONFIG.SPREADSHEET_ID,
-                        range: `${CONFIG.MEMBERS_SHEET}!P${i + 2}`,
-                        valueInputOption: 'USER_ENTERED',
-                        requestBody: { values: [[timestampStr]] }
-                    });
-
-                    dispatchedCount++;
-                } catch (mailErr) {
-                    console.error('Review email failed for ' + email + ':', mailErr.message);
-                }
-            }
-        }
-
-        await writeAuditLog(req, 'BATCH_WORKER', 'SYSTEM', `Google Review Requests Dispatched: ${dispatchedCount}`);
-        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests based on today's Wi-Fi activity.` });
-    } catch (err) {
-        return res.status(500).json({ success: false, message: 'Google Review batch failed: ' + err.message });
-    }
-});
-
-                    // Stamp Column P (Review Sent) on the Members tab
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: CONFIG.SPREADSHEET_ID,
                         range: `${CONFIG.MEMBERS_SHEET}!P${i + 2}`,
