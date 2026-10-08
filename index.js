@@ -54,7 +54,7 @@ const CONFIG = {
 // Column Mappings: Members Tab (A to N)
 const MEMBER_COL = {
     memberId: 1, firstName: 2, lastName: 3, email: 4, phone: 5, dob: 6, homeVenue: 7, 
-    dateJoined: 8, status: 9, wifiVisits: 10, lastVisitDate: 11, lastVisitVenue: 12, consent: 13, notes: 14
+    dateJoined: 8, status: 9, wifiVisits: 10, lastVisitDate: 11, lastVisitVenue: 12, consent: 13, notes: 14, eveningPass: 15, source: 16, reviewSent: 17
 };
 
 // Column Mappings: Vouchers Tab (A to N)
@@ -2076,6 +2076,80 @@ app.post('/api/member/signup', async (req, res) => {
     } catch (err) { return res.json({ success: false, message: 'Registration failed: ' + err.message }); }
 });
 
+
+app.post('/api/run-google-reviews', async (req, res) => {
+    try {
+        const sheets = getSheetsClient();
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: CONFIG.SPREADSHEET_ID, range: `${CONFIG.MEMBERS_SHEET}!A2:Q` });
+        const members = response.data.values || [];
+        if (members.length === 0) return res.json({ success: true, message: 'No members to evaluate.' });
+
+        const postman = nodemailer.createTransport({ service: 'gmail', auth: { user: CONFIG.EMAIL_USER, pass: CONFIG.EMAIL_PASS } });
+        let dispatchedCount = 0;
+        const nowUK = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/London" }));
+        const todayStr = nowUK.toLocaleDateString('en-GB');
+        const timestampStr = nowUK.toLocaleString('en-GB', { timeZone: 'Europe/London' });
+
+        for (let i = 0; i < members.length; i++) {
+            const row = members[i];
+            const email = (row[MEMBER_COL.email - 1] || '').trim();
+            const firstName = (row[MEMBER_COL.firstName - 1] || '').trim();
+            const lastVisit = (row[MEMBER_COL.lastVisitDate - 1] || '').trim();
+            const consent = (row[MEMBER_COL.consent - 1] || '').toUpperCase();
+            const reviewSent = (row[MEMBER_COL.reviewSent - 1] || '').trim();
+            const homeVenue = (row[MEMBER_COL.homeVenue - 1] || '').toLowerCase().includes('wittering') ? 'East Wittering' : 'Selsey';
+
+            // Check if visited today, has consent, and never sent a review request
+            if (lastVisit === todayStr && consent === 'TRUE' && reviewSent === '' && email.includes('@')) {
+                const reviewLink = homeVenue === 'East Wittering' ? 'https://g.page/r/CSKeJeTOCIv3EBM/review' : 'https://g.page/r/selsey_link_pending';
+                
+                try {
+                    await postman.sendMail({
+                        from: `"${CONFIG.EMAIL_SENDER_NAME}" <${CONFIG.EMAIL_USER}>`,
+                        to: email,
+                        subject: `A 10-second review really helps more than you'd think ⭐`,
+                        html: `<div style="font-family: Arial, sans-serif; text-align: center; color: #2C2C2A; padding: 20px; background-color: #F9F9F6;">
+                                <div style="max-width: 600px; margin: auto; border: 1px solid #E5E5E0; padding: 30px; border-radius: 12px; background-color: #ffffff;">
+                                    <h2 style="color: #2C2C2A; margin-top: 10px; font-size: 24px; font-weight: bold;">How was your visit, ${firstName}?</h2>
+                                    <p style="font-size: 15px; color: #555553; line-height: 1.6;">
+                                        As an independent family restaurant, local reviews mean the world to us and really help others find us. If you enjoyed your time at Boulevard ${homeVenue} today, we'd be incredibly grateful for a quick 5-star review.
+                                    </p>
+                                    <div style="margin: 30px 0;">
+                                        <a href="${reviewLink}" style="background-color: #D4AF37; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                            Leave a Quick 5-Star Review
+                                        </a>
+                                    </div>
+                                    <p style="font-size: 12px; color: #718281; margin-top: 20px;">Thank you for being part of the Boulevard family!</p>
+                                </div>
+                            </div>`
+                    });
+
+                    // Stamp Column P (index 16) with dispatch timestamp
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: CONFIG.SPREADSHEET_ID,
+                        range: `${CONFIG.MEMBERS_SHEET}!P${i + 2}`,
+                        valueInputOption: 'USER_ENTERED',
+                        requestBody: { values: [[timestampStr]] }
+                    });
+                    dispatchedCount++;
+                } catch (mailErr) { console.error('Review send err: ', mailErr.message); }
+            }
+        }
+        await writeAuditLog(req, 'BATCH_WORKER', 'SYSTEM', `Google Review Requests Dispatched: ${dispatchedCount}`);
+        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests.` });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Review batch failed: ' + err.message });
+    }
+});
+
+
+app.post('/api/run-evening-passes', async (req, res) => {
+    try {
+        const result = await processEveningBatch();
+        return res.json({ success: true, message: `Dispatched ${result.passesIssued} evening passes.` });
+    } catch (err) { return res.status(500).json({ success: false, message: err.message }); }
+});
+
 app.post('/api/run-birthdays', async (req, res) => {
     try {
         const sheets = getSheetsClient();
@@ -2237,7 +2311,15 @@ async function processEveningBatch() {
         console.error("Pass dispatch error:", err.message);
     }
 
-    let bdayCount = 0;
+    
+    let reviewCount = 0;
+    try {
+        const revRes = await fetch(`http://localhost:${PORT}/api/run-google-reviews`, { method: 'POST' });
+        const revData = await revRes.json();
+        reviewCount = revData.message || 'Completed';
+    } catch (rErr) { console.error("Review trigger err:", rErr.message); }
+
+let bdayCount = 0;
     try {
         const bdayResponse = await fetch(`http://localhost:${PORT}/api/run-birthdays`, { method: 'POST' });
         const bdayData = await bdayResponse.json();
