@@ -2084,7 +2084,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
         // 1. Fetch Wi-Fi leads logged today
         const wifiRes = await sheets.spreadsheets.values.get({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: `${CONFIG.WIFI_LEADS_SHEET}!A2:C`
+            range: `${CONFIG.WIFI_LEADS_SHEET}!A2:D`
         });
         const wifiRows = wifiRes.data.values || [];
 
@@ -2104,7 +2104,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
         }
 
         if (todaysWifiGuests.size === 0) {
-            return res.json({ success: true, message: 'No Wi-Fi connections recorded today (' + todayStr + ').' });
+            return res.json({ success: true, message: 'No Wi-Fi connections recorded today.', count: 0 });
         }
 
         // 2. Cross-reference with the Members master directory
@@ -2114,7 +2114,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
         });
         const members = memberRes.data.values || [];
         if (members.length === 0) {
-            return res.json({ success: true, message: 'No registered members found.' });
+            return res.json({ success: true, message: 'No registered members found.', count: 0 });
         }
 
         const postman = nodemailer.createTransport({
@@ -2129,41 +2129,49 @@ app.post('/api/run-google-reviews', async (req, res) => {
             const email = (row[MEMBER_COL.email - 1] || '').trim().toLowerCase();
             const firstName = (row[MEMBER_COL.firstName - 1] || '').trim();
             const consent = (row[MEMBER_COL.consent - 1] || '').toUpperCase();
-            const reviewSent = (row[MEMBER_COL.reviewSent - 1] || '').trim();
+            
+            // Check Column P (Index 15) for lockout
+            const reviewSent = (row[15] || '').trim();
 
-            // Condition: Connected to Wi-Fi today, marketing consent granted, and no review email sent yet
+            // Condition: Connected to Wi-Fi today AND they have marketing consent AND no review sent yet
             if (todaysWifiGuests.has(email) && consent === 'TRUE' && reviewSent === '') {
                 const venueConnected = todaysWifiGuests.get(email);
                 const venueName = venueConnected.toLowerCase().includes('wittering') ? 'East Wittering' : 'Selsey';
-                const reviewLink = venueName === 'East Wittering'
-                    ? 'https://g.page/r/CSKeJeTOCIv3EBM/review'
-                    : 'https://g.page/r/selsey_link_pending';
+                const reviewUrl = venueName === 'East Wittering'
+                    ? 'https://search.google.com/local/writereview?placeid=ChIJ8_Wv53wfdEgRcD7wEa7pUjY'
+                    : 'https://search.google.com/local/writereview?placeid=ChIJxWf_eX0fdEgR4xX7f_N2P9Y';
+                
+                const displayName = firstName ? ` ${firstName}` : '';
 
                 try {
                     await postman.sendMail({
                         from: `"${CONFIG.EMAIL_SENDER_NAME}" <${CONFIG.EMAIL_USER}>`,
                         to: email,
-                        subject: `A 10-second review really helps more than you'd think ⭐`,
+                        subject: `How was your visit to Boulevard ${venueName}${displayName}? ⭐⭐⭐⭐⭐`,
                         html: `
                             <div style="font-family: Arial, sans-serif; text-align: center; color: #2C2C2A; padding: 20px; background-color: #F9F9F6;">
                                 <div style="max-width: 600px; margin: auto; border: 1px solid #E5E5E0; padding: 30px; border-radius: 12px; background-color: #ffffff;">
-                                    <h2 style="color: #2C2C2A; margin-top: 10px; font-size: 24px; font-weight: bold;">How was your visit today, ${firstName}?</h2>
+                                    <img src="${CONFIG.LOGO_URL}" alt="The Boulevard" style="width: 150px; margin-bottom: 20px;">
+                                    <h2 style="color: #2C2C2A; margin-top: 10px; font-size: 24px; font-weight: bold;">How did we do today${displayName}?</h2>
                                     <p style="font-size: 15px; color: #555553; line-height: 1.6;">
-                                        As an independent family restaurant, local reviews mean the world to us and really help others discover us. If you enjoyed your time at Boulevard ${venueName} today, we would be incredibly grateful for a quick 5-star review.
+                                        Thank you for visiting us at Boulevard ${venueName} today! As an independent family restaurant, local reviews mean the world to us and help others discover our food and team.
+                                    </p>
+                                    <p style="font-size: 15px; color: #555553; line-height: 1.6;">
+                                        If you enjoyed your time with us, it would mean so much if you could leave us a quick 5-star review on Google.
                                     </p>
                                     <div style="margin: 30px 0;">
-                                        <a href="${reviewLink}" style="background-color: #D4AF37; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
-                                            Leave a Quick 5-Star Review
+                                        <a href="${reviewUrl}" style="background-color: #2C2C2A; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                            ⭐ Leave a 5-Star Google Review
                                         </a>
                                     </div>
-                                    <p style="font-size: 12px; color: #718281; margin-top: 20px;">
-                                        Thank you for being part of the Boulevard family!
+                                    <p style="font-size: 13px; color: #718281; line-height: 1.5;">
+                                        Had an issue or something wasn't quite right? Please reply directly to this email so our management team can assist you personally.
                                     </p>
                                 </div>
                             </div>`
                     });
 
-                    // Lockout: Stamp Column P (Row i + 2)
+                    // Stamp Column P (Review Sent) on the Members tab
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: CONFIG.SPREADSHEET_ID,
                         range: `${CONFIG.MEMBERS_SHEET}!P${i + 2}`,
@@ -2179,7 +2187,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
         }
 
         await writeAuditLog(req, 'BATCH_WORKER', 'SYSTEM', `Google Review Requests Dispatched: ${dispatchedCount}`);
-        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests based on today's Wi-Fi activity.` });
+        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests based on today's Wi-Fi activity.`, count: dispatchedCount });
     } catch (err) {
         return res.status(500).json({ success: false, message: 'Google Review batch failed: ' + err.message });
     }
