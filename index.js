@@ -2114,7 +2114,7 @@ app.post('/api/run-google-reviews', async (req, res) => {
         });
         const members = memberRes.data.values || [];
         if (members.length === 0) {
-            return res.json({ success: true, message: 'No registered members found.', count: 0 });
+            return res.json({ success: true, message: 'No registered members found.' });
         }
 
         const postman = nodemailer.createTransport({
@@ -2133,13 +2133,16 @@ app.post('/api/run-google-reviews', async (req, res) => {
             // Check Column P (Index 15) for lockout
             const reviewSent = (row[15] || '').trim();
 
-            // Condition: Connected to Wi-Fi today AND they have marketing consent AND no review sent yet
+            // Condition: Connected to Wi-Fi today AND marketing consent granted AND no review sent yet
             if (todaysWifiGuests.has(email) && consent === 'TRUE' && reviewSent === '') {
                 const venueConnected = todaysWifiGuests.get(email);
-                const venueName = venueConnected.toLowerCase().includes('wittering') ? 'East Wittering' : 'Selsey';
-                const reviewUrl = venueName === 'East Wittering'
-                    ? 'https://search.google.com/local/writereview?placeid=ChIJ8_Wv53wfdEgRcD7wEa7pUjY'
-                    : 'https://search.google.com/local/writereview?placeid=ChIJxWf_eX0fdEgR4xX7f_N2P9Y';
+                const isWittering = venueConnected.toLowerCase().includes('wittering');
+                const venueName = isWittering ? 'East Wittering' : 'Selsey';
+                
+                // Direct live Google Review links
+                const reviewUrl = isWittering
+                    ? 'https://g.page/r/CSKeJeTOCIv3EBM/review'
+                    : 'https://g.page/r/CTYyWhDJdC3JEBM/review';
                 
                 const displayName = firstName ? ` ${firstName}` : '';
 
@@ -2170,6 +2173,28 @@ app.post('/api/run-google-reviews', async (req, res) => {
                                 </div>
                             </div>`
                     });
+
+                    // Lockout: Stamp Column P (Row i + 2) in Members
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: CONFIG.SPREADSHEET_ID,
+                        range: `${CONFIG.MEMBERS_SHEET}!P${i + 2}`,
+                        valueInputOption: 'USER_ENTERED',
+                        requestBody: { values: [[timestampStr]] }
+                    });
+
+                    dispatchedCount++;
+                } catch (mailErr) {
+                    console.error('Review email failed for ' + email + ':', mailErr.message);
+                }
+            }
+        }
+
+        await writeAuditLog(req, 'BATCH_WORKER', 'SYSTEM', `Google Review Requests Dispatched: ${dispatchedCount}`);
+        return res.json({ success: true, message: `Dispatched ${dispatchedCount} review requests based on today's Wi-Fi activity.` });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Google Review batch failed: ' + err.message });
+    }
+});
 
                     // Stamp Column P (Review Sent) on the Members tab
                     await sheets.spreadsheets.values.update({
