@@ -30,6 +30,8 @@ const CONFIG = {
     STAFF_SHEET: 'Staff',
     AUDIT_SHEET: 'Audit Log',
     WIFI_SHEET: 'Wi-Fi Sessions',
+    WIFI_LEADS_SHEET: 'WiFi_Leads',
+    VENUE_API_KEY: process.env.VENUE_API_KEY || 'blvd_wifi_secure_lead_token_2026',
     PROMO_SHEET: 'Promos & Draws',
     
     // Email Dispatcher Settings
@@ -399,8 +401,47 @@ app.get('/join', (req, res) => {
 
             <script>
                 let registrationData = {
-                    firstName: '', lastName: '', email: '', phone: '', dob: '', homeVenue: 'East Wittering'
+                    firstName: '', lastName: '', email: '', phone: '', dob: '', homeVenue: 'East Wittering', source: 'Direct / Website'
                 };
+
+                function handleWifiRedirect() {
+                    const params = new URLSearchParams(window.location.search);
+                    const emailParam = params.get('email');
+                    const firstParam = params.get('first') || params.get('firstName');
+                    const lastParam = params.get('last') || params.get('lastName');
+                    const venueParam = params.get('venue');
+                    const sourceParam = params.get('source');
+
+                    if (sourceParam) {
+                        registrationData.source = sourceParam === 'wifi' ? (venueParam ? 'Wi-Fi - ' + venueParam : 'Wi-Fi - Selsey') : sourceParam;
+                    } else if (venueParam && venueParam.toLowerCase().includes('wifi')) {
+                        registrationData.source = venueParam;
+                    }
+
+                    if (firstParam) {
+                        const el = document.getElementById('custFirstName');
+                        if (el) el.value = firstParam.trim();
+                        registrationData.firstName = firstParam.trim();
+                    }
+                    if (lastParam) {
+                        const el = document.getElementById('custLastName');
+                        if (el) el.value = lastParam.trim();
+                        registrationData.lastName = lastParam.trim();
+                    }
+                    if (venueParam) {
+                        const venueNormalized = venueParam.toLowerCase().includes('selsey') ? 'Selsey' : (venueParam.toLowerCase().includes('wittering') ? 'East Wittering' : venueParam);
+                        registrationData.homeVenue = venueNormalized;
+                        const venueRadio = document.querySelector('input[name="venueChoice"][value="' + venueNormalized + '"]');
+                        if (venueRadio) venueRadio.checked = true;
+                    }
+                    if (emailParam) {
+                        const cleanEmail = emailParam.trim().toLowerCase();
+                        const el = document.getElementById('custEmail');
+                        if (el) el.value = cleanEmail;
+                        registrationData.email = cleanEmail;
+                    }
+                }
+                document.addEventListener('DOMContentLoaded', handleWifiRedirect);
 
                 const screens = ['screen1', 'screen2', 'screen3', 'screen4', 'screen5', 'screen6', 'screen7', 'screenExisting'];
 
@@ -564,7 +605,8 @@ app.get('/join', (req, res) => {
                             phone: registrationData.phone,
                             dob: registrationData.dob,
                             homeVenue: registrationData.homeVenue,
-                            marketingConsent: isConsented
+                            marketingConsent: isConsented,
+                            source: registrationData.source || 'Direct / Website'
                         })
                     }).then(r => r.json());
                     toggleSpinner(false);
@@ -1874,8 +1916,130 @@ app.post('/api/member/check', async (req, res) => {
     } catch (err) { return res.json({ exists: false, error: err.message }); }
 });
 
+app.post('/api/wifi/lead', async (req, res) => {
+    try {
+        const authHeader = req.headers['x-boulevard-venue-auth'];
+        if (authHeader !== CONFIG.VENUE_API_KEY) {
+            return res.status(401).json({ success: false, message: 'Unauthorised venue request.' });
+        }
+
+        const { venue, email, firstName, lastName, marketingConsent, macAddress } = req.body;
+        if (!email || !email.includes('@')) {
+            return res.status(400).json({ success: false, message: 'Valid email address is required.' });
+        }
+
+        const cleanEmail = email.trim().toLowerCase();
+        const nowUK = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' });
+
+        const sheets = getSheetsClient();
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: `${CONFIG.WIFI_LEADS_SHEET}!A:I`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[
+                    nowUK,
+                    venue || 'Selsey',
+                    cleanEmail,
+                    firstName || '',
+                    lastName || '',
+                    marketingConsent === true || marketingConsent === 'true' ? 'TRUE' : 'FALSE',
+                    macAddress || '',
+                    'Pending',
+                    ''
+                ]]
+            }
+        });
+
+        return res.json({ success: true, message: 'Lead logged successfully.' });
+    } catch (err) {
+        console.error('Wi-Fi lead capture error:', err.message);
+        return res.status(500).json({ success: false, message: 'Internal server error logging lead: ' + err.message });
+    }
+});
+
+app.post('/api/run-wifi-invites', async (req, res) => {
+    try {
+        const sheets = getSheetsClient();
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: `${CONFIG.WIFI_LEADS_SHEET}!A2:I`
+        });
+        const leads = response.data.values || [];
+        if (!leads || leads.length === 0) {
+            return res.json({ success: true, message: 'No Wi-Fi leads found.', count: 0 });
+        }
+
+        const postman = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user: CONFIG.EMAIL_USER, pass: CONFIG.EMAIL_PASS }
+        });
+
+        let invitesSent = 0;
+        const nowUK = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' });
+
+        for (let i = 0; i < leads.length; i++) {
+            const row = leads[i];
+            const venue = row[1] || 'Selsey';
+            const email = (row[2] || '').trim();
+            const firstName = (row[3] || '').trim();
+            const lastName = (row[4] || '').trim();
+            const consent = (row[5] || '').toUpperCase();
+            const status = (row[7] || '').trim();
+
+            if (status === 'Pending' && consent === 'TRUE' && email.includes('@')) {
+                const joinUrl = `https://join.boulevardrestaurant.co.uk/join?email=${encodeURIComponent(email)}&first=${encodeURIComponent(firstName)}&last=${encodeURIComponent(lastName)}&venue=${encodeURIComponent(venue)}&source=wifi`;
+                const displayName = firstName ? ` ${firstName}` : '';
+
+                try {
+                    await postman.sendMail({
+                        from: `"${CONFIG.EMAIL_SENDER_NAME}" <${CONFIG.EMAIL_USER}>`,
+                        to: email,
+                        subject: `Complete your Boulevard family membership${displayName}!`,
+                        html: `
+                            <div style="font-family: Arial, sans-serif; text-align: center; color: #2C2C2A; padding: 20px; background-color: #F9F9F6;">
+                                <div style="max-width: 600px; margin: auto; border: 1px solid #E5E5E0; padding: 30px; border-radius: 12px; background-color: #ffffff;">
+                                    <img src="${CONFIG.LOGO_URL}" alt="The Boulevard" style="width: 150px; margin-bottom: 20px;">
+                                    <h2 style="color: #2C2C2A; margin-top: 10px; font-size: 24px; font-weight: bold;">Thank you for visiting Boulevard ${venue}</h2>
+                                    <p style="font-size: 15px; color: #555553; line-height: 1.6;">
+                                        We loved having you with us! Complete your Boulevard family membership to enjoy exclusive treats, birthday rewards, and member-only announcements.
+                                    </p>
+                                    <div style="margin: 30px 0;">
+                                        <a href="${joinUrl}" style="background-color: #2C2C2A; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                            Claim Your Membership Pass
+                                        </a>
+                                    </div>
+                                    <p style="font-size: 12px; color: #718281; margin-top: 20px;">
+                                        If you did not connect to our guest Wi-Fi, you can safely ignore this email.
+                                    </p>
+                                </div>
+                            </div>`
+                    });
+
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: CONFIG.SPREADSHEET_ID,
+                        range: `${CONFIG.WIFI_LEADS_SHEET}!H${i + 2}:I${i + 2}`,
+                        valueInputOption: 'USER_ENTERED',
+                        requestBody: { values: [['Invite Sent', nowUK]] }
+                    });
+
+                    invitesSent++;
+                } catch (mailErr) {
+                    console.error(`Failed to send invite to ${email}:`, mailErr.message);
+                }
+            }
+        }
+
+        await writeAuditLog(req, 'BATCH_WORKER', 'SYSTEM', `Wi-Fi Invites Dispatched: ${invitesSent}`);
+        return res.json({ success: true, message: `Dispatched ${invitesSent} Wi-Fi invites successfully.`, count: invitesSent });
+    } catch (err) {
+        console.error('Wi-Fi invite batch error:', err.message);
+        return res.status(500).json({ success: false, message: 'Wi-Fi invite batch failed: ' + err.message });
+    }
+});
+
 app.post('/api/member/signup', async (req, res) => {
-    const { firstName, lastName, email, phone, dob, homeVenue, marketingConsent } = req.body;
+    const { firstName, lastName, email, phone, dob, homeVenue, marketingConsent, source } = req.body;
     if (!email || !email.includes('@')) return res.json({ success: false, message: 'Valid email is required.' });
     try {
         const sheets = getSheetsClient();
@@ -1888,9 +2052,30 @@ app.post('/api/member/signup', async (req, res) => {
         }
         const newMemberId = `${CONFIG.MEMBERSHIP_PREFIX}${1001 + rows.length}`;
         await sheets.spreadsheets.values.append({
-            spreadsheetId: CONFIG.SPREADSHEET_ID, range: `${CONFIG.MEMBERS_SHEET}!A:N`, valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[ newMemberId, firstName || '', lastName || '', email.toLowerCase().trim(), phone || '', dob || '', homeVenue || 'East Wittering', new Date().toLocaleDateString('en-GB'), 'PENDING', 0, '', '', marketingConsent ? 'TRUE' : 'FALSE', 'Awaiting Evening Pass' ]] }
+            spreadsheetId: CONFIG.SPREADSHEET_ID, range: `${CONFIG.MEMBERS_SHEET}!A:O`, valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [[ newMemberId, firstName || '', lastName || '', email.toLowerCase().trim(), phone || '', dob || '', homeVenue || 'East Wittering', new Date().toLocaleDateString('en-GB'), 'PENDING', 0, '', '', marketingConsent ? 'TRUE' : 'FALSE', 'Awaiting Evening Pass', source || 'Direct / Website' ]] }
         });
+
+        try {
+            const leadRes = await sheets.spreadsheets.values.get({
+                spreadsheetId: CONFIG.SPREADSHEET_ID,
+                range: `${CONFIG.WIFI_LEADS_SHEET}!A2:H`
+            });
+            const leadRows = leadRes.data.values || [];
+            for (let i = 0; i < leadRows.length; i++) {
+                const leadEmail = (leadRows[i][2] || '').toLowerCase().trim();
+                if (leadEmail === email.toLowerCase().trim()) {
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: CONFIG.SPREADSHEET_ID,
+                        range: `${CONFIG.WIFI_LEADS_SHEET}!H${i + 2}`,
+                        valueInputOption: 'USER_ENTERED',
+                        requestBody: { values: [['Joined']] }
+                    });
+                }
+            }
+        } catch (leadUpdateErr) {
+            console.error('WiFi lead conversion status update error:', leadUpdateErr.message);
+        }
         await writeAuditLog(req, 'CUSTOMER_PWA', email, `New Member Joined: ${newMemberId}`);
 
         try {
