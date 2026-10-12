@@ -2088,9 +2088,17 @@ app.post('/api/run-google-reviews', async (req, res) => {
         });
         const wifiRows = wifiRes.data.values || [];
 
+        // Note: Get the current timestamp locked strictly to UK London time
         const nowUK = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/London" }));
-        const todayStr = nowUK.toLocaleDateString('en-GB'); // e.g. DD/MM/YYYY
+        const todayStr = nowUK.toLocaleDateString('en-GB'); // e.g. 12/10/2026
         const timestampStr = nowUK.toLocaleString('en-GB', { timeZone: 'Europe/London' });
+
+        // Note: Extract the day, month, and year individually so we can recognise any date format
+        const dayNum = String(nowUK.getDate()).padStart(2, '0');
+        const monthNum = String(nowUK.getMonth() + 1).padStart(2, '0');
+        const yearNum = String(nowUK.getFullYear());
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const currentMonthName = monthNames[nowUK.getMonth()];
 
         // Build a map of distinct emails that connected to Wi-Fi today and their venue
         const todaysWifiGuests = new Map();
@@ -2098,7 +2106,17 @@ app.post('/api/run-google-reviews', async (req, res) => {
             const rowTime = (wRow[0] || '').trim();
             const venue = (wRow[1] || 'Selsey').trim();
             const email = (wRow[2] || '').trim().toLowerCase();
-            if (rowTime.startsWith(todayStr) && email.includes('@')) {
+
+            // Note: Check if the date in Column A matches today in UK numbers, ISO, or full English text
+            const isUkDate = rowTime.startsWith(`${dayNum}/${monthNum}/${yearNum}`);
+            const isIsoDate = rowTime.startsWith(`${yearNum}-${monthNum}-${dayNum}`);
+            const isTextDate = rowTime.includes(yearNum) && 
+                               (rowTime.includes(currentMonthName) || rowTime.includes(currentMonthName.substring(0, 3))) && 
+                               rowTime.includes(String(nowUK.getDate()));
+
+            const isToday = isUkDate || isIsoDate || isTextDate;
+
+            if (isToday && email.includes('@')) {
                 todaysWifiGuests.set(email, venue);
             }
         }
