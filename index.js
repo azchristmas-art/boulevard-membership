@@ -1725,7 +1725,9 @@ app.get('/validate-code', async (req, res) => {
         if (mRows && mRows.length > 0) {
             for (let row of mRows) {
                 const memberId = (row[MEMBER_COL.memberId - 1] || '').toUpperCase().trim();
-                if (memberId === searchCode) {
+                const cleanMemberId = memberId.replace(/-/g, '');
+                const cleanSearch = searchCode.replace(/-/g, '');
+                if (memberId === searchCode || cleanMemberId === cleanSearch) {
                     const venue = row[MEMBER_COL.homeVenue - 1] || 'Boulevard';
                     const status = (row[MEMBER_COL.status - 1] || 'ACTIVE').toUpperCase();
                     return res.json({
