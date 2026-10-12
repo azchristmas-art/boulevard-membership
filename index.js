@@ -2382,7 +2382,12 @@ app.post('/api/run-evening-batch', async (req, res) => {
     try {
         const result = await processEveningBatch();
         await writeAuditLog(req, 'STAFF_MANUAL', 'BATCH_DISPATCH', `Ran 7PM batch manually: ${result.passesIssued} passes issued`);
-        return res.json({ success: true, passesIssued: result.passesIssued, birthdayResult: result.birthdayResult });
+        return res.json({ 
+            success: true, 
+            passesIssued: result.passesIssued, 
+            birthdayResult: result.birthdayResult,
+            message: `${result.passesIssued} evening passes dispatched successfully.`
+        });
     } catch (err) {
         return res.json({ success: false, message: err.message });
     }
