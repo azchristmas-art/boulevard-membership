@@ -2324,22 +2324,60 @@ async function processEveningBatch() {
         });
         const members = memberRes.data.values || [];
 
+        // 1. Scan existing rows to find the highest sequential Member ID number
+        let maxIdNum = 1400;
+        for (const row of members) {
+            const existingId = (row[MEMBER_COL.memberId - 1] || '').toString().trim();
+            const idMatch = existingId.match(/BLVD-?(\d+)/i);
+            if (idMatch) {
+                const parsedNum = parseInt(idMatch[1], 10);
+                if (parsedNum > maxIdNum) {
+                    maxIdNum = parsedNum;
+                }
+            }
+        }
+
         for (let i = 0; i < members.length; i++) {
             const row = members[i];
             const status = (row[MEMBER_COL.status - 1] || '').trim().toUpperCase();
-            const memberId = row[MEMBER_COL.memberId - 1];
+            let memberId = (row[MEMBER_COL.memberId - 1] || '').toString().trim();
             const firstName = row[MEMBER_COL.firstName - 1] || 'Member';
             const email = (row[MEMBER_COL.email - 1] || '').trim().toLowerCase();
-            const venue = row[MEMBER_COL.homeVenue - 1] || 'East Wittering';
+            const rawVenue = (row[MEMBER_COL.homeVenue - 1] || '').trim();
             const rowNumber = i + 2;
 
             if (status === 'PENDING' && email && email.includes('@')) {
+                // If Column A is empty, generate the next sequential ID and save it to the sheet
+                if (!memberId) {
+                    maxIdNum++;
+                    memberId = `BLVD${maxIdNum}`;
+
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: CONFIG.SPREADSHEET_ID,
+                        range: `${CONFIG.MEMBERS_SHEET}!A${rowNumber}`,
+                        valueInputOption: 'USER_ENTERED',
+                        requestBody: { values: [[memberId]] }
+                    });
+                }
+
+                // Promote status to ACTIVE in Column I
                 await sheets.spreadsheets.values.update({
                     spreadsheetId: CONFIG.SPREADSHEET_ID,
                     range: `${CONFIG.MEMBERS_SHEET}!I${rowNumber}`,
                     valueInputOption: 'USER_ENTERED',
                     requestBody: { values: [['ACTIVE']] }
                 });
+
+                // Update Evening Pass Status in Column N
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: CONFIG.SPREADSHEET_ID,
+                    range: `${CONFIG.MEMBERS_SHEET}!N${rowNumber}`,
+                    valueInputOption: 'USER_ENTERED',
+                    requestBody: { values: [['Sent']] }
+                });
+
+                // Show specific venue if present, otherwise neutral brand
+                const venueLabel = rawVenue ? `Home Venue: ${rawVenue}` : 'The Boulevard';
 
                 await postman.sendMail({
                     from: `"${CONFIG.EMAIL_SENDER_NAME}" <${CONFIG.EMAIL_USER}>`,
@@ -2360,7 +2398,7 @@ async function processEveningBatch() {
                                         <span style="font-size: 10px; color: #757468; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px;">Member Number</span>
                                         <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; color: #2C2C2A; font-family: monospace;">${memberId}</div>
                                     </div>
-                                    <div style="font-size: 11px; color: #757468; font-weight: bold;">Home Venue: ${venue}</div>
+                                    <div style="font-size: 11px; color: #757468; font-weight: bold;">${venueLabel}</div>
                                 </div>
                                 <p style="font-size: 13px; color: #718281; margin-top: 25px; font-weight: bold;">
                                     The Boulevard Restaurant
